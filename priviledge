@@ -6,7 +6,7 @@ import os
 # Global variables
 EDGES = []
 VERTICES = []
-HEADER = ["bID_mID_oID", "priviledged_flow", "object_type", "entity_path","read_relation_type", "write_relation_type"]
+HEADER = ["bID_mID_oID", "priviledged_flow", "object_type", "entity_path","read_relation_type", "write_relation_type","argv"]
 FEATURES = pd.DataFrame(columns=HEADER)
 
 ENTITY_COUNTS = {}
@@ -85,11 +85,15 @@ def extract_priviledge_flow_docker():
         # 初始化集合
     vset = set()
     entity_path = set()
+    task_info = []
+    process_memory=[]
+    argv = []
     # 遍历 VERTICES，只处理符合条件的顶点
     for v in VERTICES:
         if v["annotations"]["object_id"] == CENTER_ENTITY["annotations"]["object_id"]:
             vset.add(v["id"])
     # 遍历 vset 中的每个顶点，查找相应的边和目标顶点
+    #print(vset)
     for vid in vset:
         if vid in edges_from_vset:
             for e in edges_from_vset[vid]:
@@ -97,6 +101,79 @@ def extract_priviledge_flow_docker():
                     target_vertex = vertices_by_id.get(e["to"])
                     if target_vertex:
                         entity_path.add(target_vertex["annotations"]["pathname"])
+    for vid in vset:
+        if vid in edges_from_vset:
+            for e in edges_from_vset[vid]:
+                if e["annotations"]["to_type"] == "task":
+                    target_task = vertices_by_id.get(e["to"])
+                    if target_task:
+                        if target_task not in task_info:
+                            task_info.append(target_task)
+                            #假设这个task是正确的
+
+    # print(task_info)
+    # 将 task_info 转换为一个包含所有 id 的集合
+    task_ids = {task["id"] for task in task_info}
+    # 将 VERTICES 转换为字典
+    vertices_by_id = {v["id"]: v for v in VERTICES}
+
+
+
+    # # 遍历 EDGES，查找符合条件的边
+    # for e in EDGES:
+    #     if e["from"] in task_ids and e["annotations"]["to_type"] == "process_memory":
+    #         target_vertex = vertices_by_id.get(e["to"])
+    #         if target_vertex:
+    #             if target_vertex not in process_memory:
+    #                process_memory.append(target_vertex)
+    #                #假设这个process_memory是对的
+    # # 打印 process_memory 中的每个顶点信息，每个顶点信息占用一行
+    # for vertex in process_memory:
+    #     print(vertex)
+
+
+    # 递归查找 process_memory 实体
+    find_process_memory_entities(task_ids, vertices_by_id, EDGES, process_memory)
+
+    # 打印 process_memory 中的每个顶点信息，每个顶点信息占用一行
+    # for vertex in process_memory:
+    #     print(vertex)
+
+
+
+
+    # 将 process_memory 转换为一个包含所有 id 的集合
+    process_memory_ids = {p["id"] for p in process_memory}
+
+    # 将 VERTICES 转换为字典
+    vertices_by_id = {v["id"]: v for v in VERTICES}
+
+    # 遍历 EDGES，查找符合条件的边
+    for e in EDGES:
+        if e["from"] in process_memory_ids and e["annotations"]["to_type"] == "argv":
+            target_vertex = vertices_by_id.get(e["to"])
+            if target_vertex:
+                if target_vertex["annotations"]["value"] not in argv:
+                    argv.append(target_vertex["annotations"]["value"])
+
+    # 打印 argv 列表中的每个元素，每个元素占用一行
+    for arg in argv:
+        print(arg)
+    # for p in process_memory:
+    #     for e in EDGES:
+    #         if e["from"] in process_memory and e["annotations"]["to_type"]=="argv":
+    #             for v in VERTICES:
+    #                 if v["id"] == e["to"]:
+    #                     argv.append(v["annotations"]["argv"])
+    # for t in task_info:
+    #     for e in EDGES:
+    #         if e["from"] in task_info and e["annotations"]["to_type"]=="process_memory":
+    #             for v in VERTICES:
+    #                 if v["id"] == e["to"]:
+    #                     process_memory.add(v)
+    # print(process_memory)
+
+
 
     # vset=set()
     # entity_path=set()
@@ -110,7 +187,7 @@ def extract_priviledge_flow_docker():
     #                 for v in VERTICES:
     #                     if v["id"] == e["to"]:
     #                         entity_path.add(v["annotations"]["pathname"])
-
+    for v in VERTICES:
         for id in ids_from_type_used:
             if (v['id'] == id):
                 r_ns = (v['annotations']['ipcns'],)
@@ -153,7 +230,7 @@ def extract_priviledge_flow_docker():
     #         if v["id"] in pathid and v["annotations"]["object_type"]=="path":
     #            print(v["annotations"]["pathname"])
 
-    return priviledged_flow, CENTER_ENTITY["annotations"]["object_type"],entity_path,read_relation_types, write_relation_types
+    return priviledged_flow, CENTER_ENTITY["annotations"]["object_type"],entity_path,read_relation_types, write_relation_types,argv
 
 
 # Function to load a graph in a JSON format and store its vertices and edges globally
@@ -185,6 +262,20 @@ def extract_identifier():
         str(CENTER_ENTITY["annotations"]["cf:machine_id"]).split(":")[1] + "_" + str(
             CENTER_ENTITY["annotations"]["object_id"])
 
+def find_process_memory_entities(task_ids, vertices_by_id, edges, process_memory):
+    # 遍历 EDGES，查找符合条件的边
+    found_new = False
+    for e in edges:
+        if e["from"] in task_ids and e["annotations"]["to_type"] == "process_memory":
+            target_vertex = vertices_by_id.get(e["to"])
+            if target_vertex and target_vertex not in process_memory:
+                process_memory.append(target_vertex)
+                found_new = True
+
+    # 如果找到新的 process_memory 实体，递归调用
+    if found_new:
+        new_task_ids = {vertex["id"] for vertex in process_memory}
+        find_process_memory_entities(new_task_ids, vertices_by_id, edges, process_memory)
 
 def main(filepath, extract_priviledge_flow, host_ipcns, cluster_ipcns=None, policy=None):
     global EDGES, VERTICES, FEATURES, HOST_IPCNS, CLUSTER_IPCNS, POLICY_NUMBER
@@ -204,7 +295,7 @@ def main(filepath, extract_priviledge_flow, host_ipcns, cluster_ipcns=None, poli
 
         set_center_entity(file.strip())
 
-        priviledged_flow, object_type, entity_path,read_relation_types, write_relation_types = extract_priviledge_flow()
+        priviledged_flow, object_type, entity_path,read_relation_types, write_relation_types,argv = extract_priviledge_flow()
         bID_mID_oID = extract_identifier()
 
         data_point = {HEADER[0]: bID_mID_oID,
@@ -213,6 +304,7 @@ def main(filepath, extract_priviledge_flow, host_ipcns, cluster_ipcns=None, poli
                       HEADER[3]: ','.join(entity_path),
                       HEADER[4]: ','.join(read_relation_types),
                       HEADER[5]: ','.join(write_relation_types),
+                      HEADER[6]: ','.join(argv),
                       }
 
         FEATURES = FEATURES._append(data_point, ignore_index=True)
